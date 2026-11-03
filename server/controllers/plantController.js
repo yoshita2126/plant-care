@@ -1,44 +1,17 @@
-import { supabase } from "../config/db.js";
+import mongoose from "mongoose";
+import CareLog from "../models/CareLog.js";
+import Plant from "../models/Plant.js";
 import { calendarDay, getPlantSchedule, parseCalendarDate } from "../utils/dates.js";
 
-const plantColumns = "id,name,type,watering_interval,last_watered,notes,created_at,updated_at";
-const logColumns = "id,plant_id,plant_name,action,date";
-
-function mapPlant(row) {
-  return {
-    _id: row.id,
-    name: row.name,
-    type: row.type,
-    wateringInterval: row.watering_interval,
-    lastWatered: row.last_watered,
-    notes: row.notes,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at
-  };
-}
-
-function mapLog(row) {
-  return {
-    _id: row.id,
-    plantId: row.plant_id,
-    plantName: row.plant_name,
-    action: row.action,
-    date: row.date
-  };
-}
-
-function databaseError(error) {
-  const mapped = new Error(error.message || "Supabase request failed.");
-  mapped.code = error.code;
-  mapped.status = ["22P02", "23503", "23514"].includes(error.code) ? 400 : error.code === "42501" ? 403 : 500;
-  throw mapped;
+function requestError(message, status = 400) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
 }
 
 function validatePlantInput(body, { partial = false } = {}) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
-    const error = new Error("Request body must be a JSON object.");
-    error.status = 400;
-    throw error;
+    throw requestError("Request body must be a JSON object.");
   }
 
   const input = {};
@@ -49,85 +22,57 @@ function validatePlantInput(body, { partial = false } = {}) {
   if (!partial) {
     for (const field of ["name", "type", "wateringInterval", "lastWatered"]) {
       if (input[field] === undefined || input[field] === "") {
-        const error = new Error(`${field} is required.`);
-        error.status = 400;
-        throw error;
+        throw requestError(`${field} is required.`);
       }
     }
   }
   if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.trim().length > 80)) {
-    const error = new Error("Plant name must contain 1 to 80 characters.");
-    error.status = 400;
-    throw error;
+    throw requestError("Plant name must contain 1 to 80 characters.");
   }
   if (input.type !== undefined && (typeof input.type !== "string" || !input.type.trim() || input.type.trim().length > 80)) {
-    const error = new Error("Plant type must contain 1 to 80 characters.");
-    error.status = 400;
-    throw error;
+    throw requestError("Plant type must contain 1 to 80 characters.");
   }
   if (input.wateringInterval !== undefined) {
     const interval = Number(input.wateringInterval);
     if (!Number.isInteger(interval) || interval < 1 || interval > 3650) {
-      const error = new Error("Watering interval must be a whole number from 1 to 3650.");
-      error.status = 400;
-      throw error;
+      throw requestError("Watering interval must be a whole number from 1 to 3650.");
     }
     input.wateringInterval = interval;
   }
   if (input.lastWatered !== undefined) {
     const parsedDate = parseCalendarDate(input.lastWatered);
-    if (!parsedDate) {
-      const error = new Error("Last watered must be a valid calendar date (YYYY-MM-DD).");
-      error.status = 400;
-      throw error;
-    }
-    input.lastWatered = parsedDate.toISOString().slice(0, 10);
+    if (!parsedDate) throw requestError("Last watered must be a valid calendar date (YYYY-MM-DD).");
+    input.lastWatered = parsedDate;
   }
   if (input.notes !== undefined && (typeof input.notes !== "string" || input.notes.length > 1000)) {
-    const error = new Error("Notes must be text no longer than 1000 characters.");
-    error.status = 400;
-    throw error;
+    throw requestError("Notes must be text no longer than 1000 characters.");
   }
 
-  const row = {};
-  if (input.name !== undefined) row.name = input.name.trim();
-  if (input.type !== undefined) row.type = input.type.trim();
-  if (input.wateringInterval !== undefined) row.watering_interval = input.wateringInterval;
-  if (input.lastWatered !== undefined) row.last_watered = input.lastWatered;
-  if (input.notes !== undefined) row.notes = input.notes.trim();
-  return row;
+  if (input.name !== undefined) input.name = input.name.trim();
+  if (input.type !== undefined) input.type = input.type.trim();
+  if (input.notes !== undefined) input.notes = input.notes.trim();
+  return input;
 }
 
 function validateId(id) {
-  if (!/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id)) {
-    const error = new Error("Invalid plant id.");
-    error.status = 400;
-    throw error;
-  }
+  if (!/^[\da-f]{24}$/i.test(id)) throw requestError("Invalid plant id.");
+  return new mongoose.Types.ObjectId(id);
 }
 
 async function findPlantOrFail(id) {
-  validateId(id);
-  const { data, error } = await supabase.from("plants").select(plantColumns).eq("id", id).maybeSingle();
-  if (error) databaseError(error);
-  if (!data) {
-    const error = new Error("Plant not found.");
-    error.status = 404;
-    throw error;
-  }
-  return mapPlant(data);
+  const plant = await Plant.findById(validateId(id)).lean();
+  if (!plant) throw requestError("Plant not found.", 404);
+  return plant;
 }
 
 export async function createPlant(req, res) {
-  const { data, error } = await supabase.from("plants").insert(validatePlantInput(req.body)).select(plantColumns).single();
-  if (error) databaseError(error);
-  res.status(201).json({ plant: getPlantSchedule(mapPlant(data)) });
+  const plant = await Plant.create(validatePlantInput(req.body));
+  res.status(201).json({ plant: getPlantSchedule(plant) });
 }
 
 export async function getPlants(req, res) {
-  const { data, error } = await supabase.from("plants").select(plantColumns).order("created_at", { ascending: false });
-  if (error) databaseError(error);
-  res.json({ plants: data.map((plant) => getPlantSchedule(mapPlant(plant))) });
+  const plants = await Plant.find().sort({ createdAt: -1 }).lean();
+  res.json({ plants: plants.map((plant) => getPlantSchedule(plant)) });
 }
 
 export async function getPlant(req, res) {
@@ -140,51 +85,74 @@ export async function updatePlant(req, res) {
     return res.status(400).json({ message: "Provide at least one plant field to update." });
   }
 
-  validateId(req.params.id);
-  const { data, error } = await supabase.from("plants").update(input).eq("id", req.params.id).select(plantColumns).maybeSingle();
-  if (error) databaseError(error);
-  if (!data) return res.status(404).json({ message: "Plant not found." });
-  res.json({ plant: getPlantSchedule(mapPlant(data)) });
+  const plant = await Plant.findByIdAndUpdate(
+    validateId(req.params.id),
+    { $set: input },
+    { new: true, runValidators: true }
+  ).lean();
+  if (!plant) return res.status(404).json({ message: "Plant not found." });
+  res.json({ plant: getPlantSchedule(plant) });
 }
 
 export async function deletePlant(req, res) {
-  validateId(req.params.id);
-  const { data, error } = await supabase.from("plants").delete().eq("id", req.params.id).select("id").maybeSingle();
-  if (error) databaseError(error);
-  if (!data) return res.status(404).json({ message: "Plant not found." });
+  const plantId = validateId(req.params.id);
+  const session = await mongoose.startSession();
+  try {
+    await session.withTransaction(async () => {
+      const deleted = await Plant.findByIdAndDelete(plantId, { session });
+      if (!deleted) throw requestError("Plant not found.", 404);
+      await CareLog.deleteMany({ plantId }, { session });
+    });
+  } finally {
+    await session.endSession();
+  }
   res.json({ message: "Plant and its care history deleted." });
 }
 
 export async function waterPlant(req, res) {
-  validateId(req.params.id);
-  const { data, error } = await supabase.rpc("water_plant", { plant_uuid: req.params.id });
-  if (error) databaseError(error);
-  if (!data?.length) return res.status(404).json({ message: "Plant not found." });
+  const plantId = validateId(req.params.id);
+  const session = await mongoose.startSession();
+  let plant;
+  let log;
+  try {
+    await session.withTransaction(async () => {
+      plant = await Plant.findByIdAndUpdate(
+        plantId,
+        { $set: { lastWatered: calendarDay() } },
+        { new: true, runValidators: true, session }
+      ).lean();
+      if (!plant) throw requestError("Plant not found.", 404);
+      [log] = await CareLog.create([{
+        plantId: plant._id,
+        plantName: plant.name,
+        action: "watered"
+      }], { session });
+    });
+  } finally {
+    await session.endSession();
+  }
   res.status(201).json({
-    plant: getPlantSchedule(mapPlant(data[0])),
+    plant: getPlantSchedule(plant),
     message: "Plant marked as watered.",
-    date: calendarDay().toISOString().slice(0, 10)
+    date: log.date.toISOString().slice(0, 10)
   });
 }
 
 export async function getPlantLogs(req, res) {
   const plant = await findPlantOrFail(req.params.id);
-  const { data, error } = await supabase.from("care_logs").select(logColumns).eq("plant_id", plant._id).order("date", { ascending: false });
-  if (error) databaseError(error);
-  res.json({ logs: data.map(mapLog) });
+  const logs = await CareLog.find({ plantId: plant._id }).sort({ date: -1 }).lean();
+  res.json({ logs });
 }
 
 export async function getAllLogs(req, res) {
-  const { data, error } = await supabase.from("care_logs").select(logColumns).order("date", { ascending: false });
-  if (error) databaseError(error);
-  res.json({ logs: data.map(mapLog) });
+  const logs = await CareLog.find().sort({ date: -1 }).lean();
+  res.json({ logs });
 }
 
 export async function getAttentionPlants(req, res) {
-  const { data, error } = await supabase.from("plants").select(plantColumns);
-  if (error) databaseError(error);
-  const attention = data
-    .map((plant) => getPlantSchedule(mapPlant(plant)))
+  const plants = await Plant.find().lean();
+  const attention = plants
+    .map((plant) => getPlantSchedule(plant))
     .filter((plant) => plant.status !== "Upcoming")
     .sort((a, b) => {
       if (a.status !== b.status) return a.status === "Overdue" ? -1 : 1;

@@ -1,26 +1,24 @@
-import { createClient } from "@supabase/supabase-js";
-
-export let supabase;
+import mongoose from "mongoose";
+import CareLog from "../models/CareLog.js";
+import Plant from "../models/Plant.js";
 
 export async function connectDatabase() {
-  const projectUrl = process.env.SUPABASE_URL;
-  const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
-
-  if (!projectUrl || !publishableKey) {
-    throw new Error("Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in server/.env.");
+  const uri = process.env.MONGODB_URI;
+  if (!uri || uri === "your_actual_mongodb_atlas_connection_string") {
+    throw new Error("Set a valid MONGODB_URI in server/.env.");
   }
 
-  supabase = createClient(projectUrl, publishableKey, {
-    auth: { persistSession: false, autoRefreshToken: false }
-  });
-
-  const { error } = await supabase
-    .from("plants")
-    .select("id,name,type,watering_interval,last_watered,notes,created_at,updated_at")
-    .limit(1);
-  if (error) {
-    throw new Error(`Supabase is not ready: ${error.message}. Apply server/supabase-schema.sql in the Supabase SQL Editor.`);
+  try {
+    await mongoose.connect(uri, {
+      dbName: "plantCareDB"
+    });
+  } catch (error) {
+    if (error.code === 18 || error.codeName === "AuthenticationFailed") {
+      throw new Error("MongoDB Atlas rejected authentication. Verify the database username and password in server/.env; URL-encode special characters in the password.");
+    }
+    throw error;
   }
 
-  console.log("Supabase connected: plant-care tables are available.");
+  await Promise.all([Plant.createCollection(), CareLog.createCollection()]);
+  console.log(`MongoDB connected: ${mongoose.connection.name}.`);
 }

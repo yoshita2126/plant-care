@@ -1,7 +1,9 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
-import { connectDatabase, supabase } from "./config/db.js";
+import mongoose from "mongoose";
+import { connectDatabase } from "./config/db.js";
+import { asyncHandler } from "./middleware/asyncHandler.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import logRoutes from "./routes/logRoutes.js";
 import plantRoutes from "./routes/plantRoutes.js";
@@ -22,17 +24,14 @@ app.use(cors({
   }
 }));
 app.use(express.json({ limit: "20kb" }));
-app.get("/api/health", async (req, res) => {
-  const { error } = await supabase
-    .from("plants")
-    .select("id,name,type,watering_interval,last_watered,notes,created_at,updated_at")
-    .limit(1);
-  const connected = !error;
+app.get("/api/health", asyncHandler(async (req, res) => {
+  const connected = mongoose.connection.readyState === 1;
+  if (connected) await mongoose.connection.db.admin().ping();
   res.status(connected ? 200 : 503).json({
     status: connected ? "ok" : "unavailable",
-    database: connected ? "Supabase" : "disconnected"
+    database: connected ? mongoose.connection.name : "disconnected"
   });
-});
+}));
 app.use("/api/plants", plantRoutes);
 app.use("/api/logs", logRoutes);
 app.use((req, res) => res.status(404).json({ message: "Endpoint not found." }));
