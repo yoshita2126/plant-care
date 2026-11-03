@@ -2,45 +2,110 @@ import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
 import mongoose from "mongoose";
+
 import { connectDatabase } from "./config/db.js";
 import { asyncHandler } from "./middleware/asyncHandler.js";
 import { errorHandler } from "./middleware/errorHandler.js";
+
 import logRoutes from "./routes/logRoutes.js";
 import plantRoutes from "./routes/plantRoutes.js";
 
+// Load environment variables
 dotenv.config();
 
+// Initialize Express
 const app = express();
-const port = Number(process.env.PORT) || 5000;
-const allowedOrigins = (process.env.CLIENT_ORIGIN || "http://localhost:5173,http://127.0.0.1:5173")
+
+// Port configuration (Render compatible)
+const PORT = process.env.PORT || 5000;
+
+// Allowed frontend origins
+const allowedOrigins = (
+  process.env.CLIENT_ORIGIN ||
+  "http://localhost:5173,http://127.0.0.1:5173"
+)
   .split(",")
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-app.use(cors({
-  origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error("This origin is not allowed by CORS."));
-  }
-}));
+// CORS configuration
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error("This origin is not allowed by CORS.")
+      );
+    },
+  })
+);
+
+// Middleware
 app.use(express.json({ limit: "20kb" }));
-app.get("/api/health", asyncHandler(async (req, res) => {
-  const connected = mongoose.connection.readyState === 1;
-  if (connected) await mongoose.connection.db.admin().ping();
-  res.status(connected ? 200 : 503).json({
-    status: connected ? "ok" : "unavailable",
-    database: connected ? mongoose.connection.name : "disconnected"
+
+// Root route
+app.get("/", (req, res) => {
+  res.status(200).json({
+    message: "Plant Care Reminder API is running 🌱",
+    status: "success",
   });
-}));
+});
+
+// Health check route
+app.get(
+  "/api/health",
+  asyncHandler(async (req, res) => {
+    const connected = mongoose.connection.readyState === 1;
+
+    if (connected) {
+      await mongoose.connection.db.admin().ping();
+    }
+
+    res.status(connected ? 200 : 503).json({
+      status: connected ? "ok" : "unavailable",
+      database: connected
+        ? mongoose.connection.name
+        : "disconnected",
+    });
+  })
+);
+
+// API routes
 app.use("/api/plants", plantRoutes);
 app.use("/api/logs", logRoutes);
-app.use((req, res) => res.status(404).json({ message: "Endpoint not found." }));
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    message: "Endpoint not found.",
+  });
+});
+
+// Global error handler
 app.use(errorHandler);
 
-try {
-  await connectDatabase();
-  app.listen(port, () => console.log(`Plant Care API listening on port ${port}`));
-} catch (error) {
-  console.error(`Unable to start API: ${error.message}`);
-  process.exitCode = 1;
-}
+// Start server after MongoDB connection
+const startServer = async () => {
+  try {
+    await connectDatabase();
+
+    app.listen(PORT, () => {
+      console.log(
+        `🌱 Plant Care API running on port ${PORT}`
+      );
+    });
+  } catch (error) {
+    console.error(
+      "❌ Unable to start API:",
+      error.message
+    );
+
+    process.exit(1);
+  }
+};
+
+// Start application
+startServer();
