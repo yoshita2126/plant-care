@@ -35,6 +35,12 @@ npm run dev
 
 The API runs on `http://localhost:5000` by default. `GET /api/health` pings MongoDB and reports the selected database. The server will not start if the connection URI is missing or the database cannot be reached.
 
+## Deploy to Render
+
+The root `render.yaml` defines a Node API web service and a static frontend. In Render, create a **Blueprint** from this GitHub repository and select the `main` branch. Render builds both services and configures the frontend API URL and backend CORS origin.
+
+When prompted, enter `MONGODB_URI` as a secret environment value for the `plant-care-api` service. Use the Atlas driver URI with the database user's valid password; percent-encode special characters in the username or password. Do not commit the URI or add it to the frontend service. The API health check is `/api/health`; deployment succeeds only after Atlas accepts the credentials and the API connects to `plantCareDB`.
+
 ## API
 
 - `GET /api/health` — MongoDB connectivity and selected database
