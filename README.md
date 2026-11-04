@@ -13,6 +13,8 @@ A plant watering tracker built with React, Vite, Express, and Supabase.
 2. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in `server/.env`, using the project URL and a secret key from **Project Settings → API Keys**. The secret key is only for the backend; never put it in the client or commit it.
 3. Keep `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_JWKS_URL` out of this server configuration unless you add browser-side Supabase access or JWT authentication. This app currently calls its Express API without Supabase Auth.
 
+To add eight example plants, run [`server/seed-plants.sql`](./server/seed-plants.sql) in the Supabase SQL Editor after creating the tables. The seed is safe to rerun and will not duplicate those rows.
+
 The committed `server/.env.example` contains placeholders only. The root `.gitignore` excludes `.env` files. Set `PORT` to `5000` or another available backend port. The secret key was included in the setup message; rotate it in Supabase before using it.
 
 ## Install and run
