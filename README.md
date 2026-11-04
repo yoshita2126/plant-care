@@ -1,21 +1,19 @@
 # Plant Care Reminder 🌱
 
-A plant watering tracker built with React, Vite, Express, and MongoDB Atlas using Mongoose.
+A plant watering tracker built with React, Vite, Express, and Supabase.
 
 ## Requirements
 
-- Node.js 18 or newer and npm
-- A MongoDB Atlas cluster and database user
+- Node.js 22 or newer and npm
+- A Supabase project
 
-## Configure MongoDB Atlas
+## Configure Supabase
 
-1. In Atlas, create or select a cluster and create a database user with read/write access.
-2. Add the address of the machine running the API to the cluster's Network Access allowlist.
-3. Copy the application connection string from **Connect → Drivers**. Replace the password placeholder with the database user's password; URL-encode special characters in the password.
-4. Put the complete URI in `server/.env` as `MONGODB_URI`. The backend selects the `plantCareDB` database regardless of the database name in the URI. Do not put this URI in the client or commit it.
-5. The backend creates the `plants` and `careLogs` collections when it connects. Atlas transactions require a replica set; Atlas clusters provide this support.
+1. In the Supabase project, open **SQL Editor** and run the contents of [`server/supabase.sql`](./server/supabase.sql). This creates the tables and the atomic watering function.
+2. Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` in `server/.env`, using the project URL and a secret key from **Project Settings → API Keys**. The secret key is only for the backend; never put it in the client or commit it.
+3. Keep `SUPABASE_PUBLISHABLE_KEY` and `SUPABASE_JWKS_URL` out of this server configuration unless you add browser-side Supabase access or JWT authentication. This app currently calls its Express API without Supabase Auth.
 
-The committed `server/.env.example` contains placeholders only. The root `.gitignore` excludes `.env` files. Set `PORT` to `5000` or another available backend port.
+The committed `server/.env.example` contains placeholders only. The root `.gitignore` excludes `.env` files. Set `PORT` to `5000` or another available backend port. The secret key was included in the setup message; rotate it in Supabase before using it.
 
 ## Install and run
 
@@ -33,17 +31,17 @@ npm install
 npm run dev
 ```
 
-The API runs on `http://localhost:5000` by default. `GET /api/health` pings MongoDB and reports the selected database. The server will not start if the connection URI is missing or the database cannot be reached.
+The API runs on `http://localhost:5000` by default. `GET /api/health` checks Supabase access to the `plants` table. The server will not start if Supabase cannot be reached or the required configuration is missing.
 
 ## Deploy to Render
 
 The root `render.yaml` defines a Node API web service and a static frontend. In Render, create a **Blueprint** from this GitHub repository and select the `main` branch. Render builds both services and configures the frontend API URL and backend CORS origin.
 
-When prompted, enter `MONGODB_URI` as a secret environment value for the `plant-care-api` service. Use the Atlas driver URI with the database user's valid password; percent-encode special characters in the username or password. Do not commit the URI or add it to the frontend service. The API health check is `/api/health`; deployment succeeds only after Atlas accepts the credentials and the API connects to `plantCareDB`.
+Run [`server/supabase.sql`](./server/supabase.sql) in the Supabase SQL Editor before deployment. When prompted, enter `SUPABASE_URL` and `SUPABASE_SECRET_KEY` as environment values for the `plant-care-api` service. Treat the secret key as a password: never commit it or add it to the frontend service. The API health check is `/api/health`.
 
 ## API
 
-- `GET /api/health` — MongoDB connectivity and selected database
+- `GET /api/health` — Supabase connectivity
 - `POST /api/plants` — create a plant
 - `GET /api/plants` — list plants with calculated watering status
 - `GET /api/plants/attention` — due and overdue plants
@@ -54,17 +52,17 @@ When prompted, enter `MONGODB_URI` as a secret environment value for the `plant-
 - `GET /api/plants/:id/logs` — history for one plant
 - `GET /api/logs` — care history for all plants
 
-Plant IDs are MongoDB ObjectIds. Watering intervals are whole numbers of days. Dates entered by the app are stored at the start of their UTC calendar day; watering log timestamps default to the current time.
+Plant IDs are Supabase UUIDs. Watering intervals are whole numbers of days. Dates entered by the app are stored as calendar dates; watering log timestamps default to the current time. Deleting a plant also deletes its care logs via a database foreign-key cascade.
 
 ## Verify the database and API
 
-After setting a real Atlas URI and starting the backend, check the connection:
+After setting the Supabase environment variables, running the SQL setup, and starting the backend, check the connection:
 
 ```powershell
 Invoke-RestMethod http://localhost:5000/api/health
 ```
 
-The response should report `status: ok` and `database: plantCareDB`. In Atlas, select `plantCareDB` in Data Explorer to verify that both collections exist.
+The response should report `status: ok` and `database: supabase`. In the Supabase Table Editor, verify that `plants` and `care_logs` exist.
 
 Exercise the endpoints using the running API or the web app. For example:
 

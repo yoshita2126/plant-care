@@ -1,12 +1,43 @@
-import mongoose from "mongoose";
-import CareLog from "../models/CareLog.js";
-import Plant from "../models/Plant.js";
-import { calendarDay, getPlantSchedule, parseCalendarDate } from "../utils/dates.js";
+import { getSupabase } from "../config/db.js";
+import { getPlantSchedule, parseCalendarDate } from "../utils/dates.js";
 
 function requestError(message, status = 400) {
   const error = new Error(message);
   error.status = status;
   return error;
+}
+
+function plantFromRow(row) {
+  return {
+    _id: row.id,
+    name: row.name,
+    type: row.type,
+    wateringInterval: row.watering_interval,
+    lastWatered: row.last_watered,
+    notes: row.notes ?? "",
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function logFromRow(row) {
+  return {
+    _id: row.id,
+    plantId: row.plant_id,
+    plantName: row.plant_name,
+    action: row.action,
+    date: row.date
+  };
+}
+
+function plantToRow(input) {
+  const row = {};
+  if (input.name !== undefined) row.name = input.name;
+  if (input.type !== undefined) row.type = input.type;
+  if (input.wateringInterval !== undefined) row.watering_interval = input.wateringInterval;
+  if (input.lastWatered !== undefined) row.last_watered = input.lastWatered.toISOString().slice(0, 10);
+  if (input.notes !== undefined) row.notes = input.notes;
+  return row;
 }
 
 function validatePlantInput(body, { partial = false } = {}) {
@@ -55,24 +86,41 @@ function validatePlantInput(body, { partial = false } = {}) {
 }
 
 function validateId(id) {
-  if (!/^[\da-f]{24}$/i.test(id)) throw requestError("Invalid plant id.");
-  return new mongoose.Types.ObjectId(id);
+  if (!/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id)) {
+    throw requestError("Invalid plant id.");
+  }
+  return id;
 }
 
 async function findPlantOrFail(id) {
-  const plant = await Plant.findById(validateId(id)).lean();
+  const { data: row, error } = await getSupabase()
+    .from("plants")
+    .select("*")
+    .eq("id", validateId(id))
+    .maybeSingle();
+  if (error) throw error;
+  const plant = row && plantFromRow(row);
   if (!plant) throw requestError("Plant not found.", 404);
   return plant;
 }
 
 export async function createPlant(req, res) {
-  const plant = await Plant.create(validatePlantInput(req.body));
-  res.status(201).json({ plant: getPlantSchedule(plant) });
+  const { data: row, error } = await getSupabase()
+    .from("plants")
+    .insert(plantToRow(validatePlantInput(req.body)))
+    .select("*")
+    .single();
+  if (error) throw error;
+  res.status(201).json({ plant: getPlantSchedule(plantFromRow(row)) });
 }
 
 export async function getPlants(req, res) {
-  const plants = await Plant.find().sort({ createdAt: -1 }).lean();
-  res.json({ plants: plants.map((plant) => getPlantSchedule(plant)) });
+  const { data: rows, error } = await getSupabase()
+    .from("plants")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  res.json({ plants: rows.map((row) => getPlantSchedule(plantFromRow(row))) });
 }
 
 export async function getPlant(req, res) {
@@ -85,74 +133,73 @@ export async function updatePlant(req, res) {
     return res.status(400).json({ message: "Provide at least one plant field to update." });
   }
 
-  const plant = await Plant.findByIdAndUpdate(
-    validateId(req.params.id),
-    { $set: input },
-    { new: true, runValidators: true }
-  ).lean();
+  const { data: row, error } = await getSupabase()
+    .from("plants")
+    .update({ ...plantToRow(input), updated_at: new Date().toISOString() })
+    .eq("id", validateId(req.params.id))
+    .select("*")
+    .maybeSingle();
+  if (error) throw error;
+  const plant = row && plantFromRow(row);
   if (!plant) return res.status(404).json({ message: "Plant not found." });
   res.json({ plant: getPlantSchedule(plant) });
 }
 
 export async function deletePlant(req, res) {
-  const plantId = validateId(req.params.id);
-  const session = await mongoose.startSession();
-  try {
-    await session.withTransaction(async () => {
-      const deleted = await Plant.findByIdAndDelete(plantId, { session });
-      if (!deleted) throw requestError("Plant not found.", 404);
-      await CareLog.deleteMany({ plantId }, { session });
-    });
-  } finally {
-    await session.endSession();
-  }
+  const { data: row, error } = await getSupabase()
+    .from("plants")
+    .delete()
+    .eq("id", validateId(req.params.id))
+    .select("id")
+    .maybeSingle();
+  if (error) throw error;
+  if (!row) throw requestError("Plant not found.", 404);
   res.json({ message: "Plant and its care history deleted." });
 }
 
 export async function waterPlant(req, res) {
-  const plantId = validateId(req.params.id);
-  const session = await mongoose.startSession();
-  let plant;
-  let log;
-  try {
-    await session.withTransaction(async () => {
-      plant = await Plant.findByIdAndUpdate(
-        plantId,
-        { $set: { lastWatered: calendarDay() } },
-        { new: true, runValidators: true, session }
-      ).lean();
-      if (!plant) throw requestError("Plant not found.", 404);
-      [log] = await CareLog.create([{
-        plantId: plant._id,
-        plantName: plant.name,
-        action: "watered"
-      }], { session });
-    });
-  } finally {
-    await session.endSession();
+  const { data, error } = await getSupabase().rpc("water_plant", {
+    p_plant_id: validateId(req.params.id)
+  });
+  if (error) {
+    if (error.code === "P0002") throw requestError("Plant not found.", 404);
+    throw error;
   }
+
+  const plant = plantFromRow(data.plant);
+  const log = logFromRow(data.log);
   res.status(201).json({
     plant: getPlantSchedule(plant),
     message: "Plant marked as watered.",
-    date: log.date.toISOString().slice(0, 10)
+    date: log.date.slice(0, 10)
   });
 }
 
 export async function getPlantLogs(req, res) {
   const plant = await findPlantOrFail(req.params.id);
-  const logs = await CareLog.find({ plantId: plant._id }).sort({ date: -1 }).lean();
-  res.json({ logs });
+  const { data: rows, error } = await getSupabase()
+    .from("care_logs")
+    .select("*")
+    .eq("plant_id", plant._id)
+    .order("date", { ascending: false });
+  if (error) throw error;
+  res.json({ logs: rows.map(logFromRow) });
 }
 
 export async function getAllLogs(req, res) {
-  const logs = await CareLog.find().sort({ date: -1 }).lean();
-  res.json({ logs });
+  const { data: rows, error } = await getSupabase()
+    .from("care_logs")
+    .select("*")
+    .order("date", { ascending: false });
+  if (error) throw error;
+  res.json({ logs: rows.map(logFromRow) });
 }
 
 export async function getAttentionPlants(req, res) {
-  const plants = await Plant.find().lean();
-  const attention = plants
-    .map((plant) => getPlantSchedule(plant))
+  const { data: rows, error } = await getSupabase().from("plants").select("*");
+  if (error) throw error;
+  const attention = rows
+    .map((row) => getPlantSchedule(plantFromRow(row)))
     .filter((plant) => plant.status !== "Upcoming")
     .sort((a, b) => {
       if (a.status !== b.status) return a.status === "Overdue" ? -1 : 1;

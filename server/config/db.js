@@ -1,24 +1,36 @@
-import mongoose from "mongoose";
-import CareLog from "../models/CareLog.js";
-import Plant from "../models/Plant.js";
+import { createClient } from "@supabase/supabase-js";
+
+let supabase;
+
+export function getSupabase() {
+  if (!supabase) {
+    const url = process.env.SUPABASE_URL;
+    const secretKey = process.env.SUPABASE_SECRET_KEY;
+    if (!url || !secretKey) {
+      throw new Error("Set SUPABASE_URL and SUPABASE_SECRET_KEY in server/.env.");
+    }
+
+    supabase = createClient(url, secretKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false
+      }
+    });
+  }
+
+  return supabase;
+}
 
 export async function connectDatabase() {
-  const uri = process.env.MONGODB_URI;
-  if (!uri || uri === "your_actual_mongodb_atlas_connection_string") {
-    throw new Error("Set a valid MONGODB_URI in server/.env.");
+  const client = getSupabase();
+  const checks = await Promise.all([
+    client.from("plants").select("id", { head: true, count: "exact" }),
+    client.from("care_logs").select("id", { head: true, count: "exact" })
+  ]);
+  const failedCheck = checks.find(({ error }) => error);
+  if (failedCheck) {
+    throw new Error(`Unable to connect to Supabase or access the required tables: ${failedCheck.error.message}`);
   }
 
-  try {
-    await mongoose.connect(uri, {
-      dbName: "plantCareDB"
-    });
-  } catch (error) {
-    if (error.code === 18 || error.codeName === "AuthenticationFailed") {
-      throw new Error("MongoDB Atlas rejected authentication. Verify the database username and password in server/.env; URL-encode special characters in the password.");
-    }
-    throw error;
-  }
-
-  await Promise.all([Plant.createCollection(), CareLog.createCollection()]);
-  console.log(`MongoDB connected: ${mongoose.connection.name}.`);
+  console.log("Supabase connected.");
 }

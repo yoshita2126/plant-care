@@ -1,9 +1,8 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
-import mongoose from "mongoose";
 
-import { connectDatabase } from "./config/db.js";
+import { connectDatabase, getSupabase } from "./config/db.js";
 import { asyncHandler } from "./middleware/asyncHandler.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
@@ -58,17 +57,16 @@ app.get("/", (req, res) => {
 app.get(
   "/api/health",
   asyncHandler(async (req, res) => {
-    const connected = mongoose.connection.readyState === 1;
+    const checks = await Promise.all([
+      getSupabase().from("plants").select("id", { head: true, count: "exact" }),
+      getSupabase().from("care_logs").select("id", { head: true, count: "exact" })
+    ]);
+    const failedCheck = checks.find(({ error }) => error);
+    if (failedCheck) throw failedCheck.error;
 
-    if (connected) {
-      await mongoose.connection.db.admin().ping();
-    }
-
-    res.status(connected ? 200 : 503).json({
-      status: connected ? "ok" : "unavailable",
-      database: connected
-        ? mongoose.connection.name
-        : "disconnected",
+    res.status(200).json({
+      status: "ok",
+      database: "supabase"
     });
   })
 );
@@ -87,7 +85,7 @@ app.use((req, res) => {
 // Global error handler
 app.use(errorHandler);
 
-// Start server after MongoDB connection
+// Start server after the Supabase connection is verified.
 const startServer = async () => {
   try {
     await connectDatabase();
