@@ -19,11 +19,11 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Allowed frontend origins
-const allowedOrigins = (
-  process.env.CLIENT_ORIGIN ||
-  "http://localhost:5173,http://127.0.0.1:5173"
-)
-  .split(",")
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  ...(process.env.CLIENT_ORIGIN || "").split(",")
+]
   .map((origin) => origin.trim())
   .filter(Boolean);
 
